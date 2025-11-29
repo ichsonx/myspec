@@ -1,3 +1,5 @@
 backup_20251129/
 Documents/
 .DS_Store
+*.bak
+*.bak*
