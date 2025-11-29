@@ -1,0 +1,117 @@
+归属需求 ID：REQ-2025-001  
+最后更新日期：2025-11-10  
+──────────────────────────────────────  
+
+## 用户故事-1：作为 HR，我希望按预设时间范围筛选员工，以便快速定位新人  
+**归属场景**：场景-1  
+**验收条件：**  
+- [x] 预设选项下拉可见，含 4 项：["今天", "近7天", "近30天", "自定义"]  
+- [x] 选中“近7天”后，列表数据实时更新，且 URL 含正确参数  
+- [x] 连续点击同一选项不重复请求  
+
+### 任务列表
+- [x] **任务 1.1**：前端：在 `src/views/user/UserListFilter.vue` 中新增 `<el-select v-model="dateRangePreset">`  
+- [x] **任务 1.2**：实现预设计算逻辑（`utils/dateRange.ts`）：
+  ```ts
+  export const getRange = (preset: string): { from: Date; to: Date } => {
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    switch (preset) {
+      case 'today': return { from: now, to: now };
+      case 'last7': {
+        const from = new Date(now);
+        from.setDate(now.getDate() - 6); // 含今日共 7 天
+        return { from, to: now };
+      }
+      // ...
+    }
+  };
+  ```
+- [x] **任务 1.3**：监听 `dateRangePreset` 变化 → 调用 `setQueryParams({ joinDateFrom, joinDateTo })`  
+- [x] **任务 1.4**：添加防抖：`watch(dateRangePreset, _.debounce(applyFilter, 300))`  
+---
+
+## 用户故事-2：作为 HR，我希望自定义入职日期区间，以便精确筛选某一时间段入职的员工  
+**归属场景**：场景-2、场景-3  
+**验收条件：**  
+- [x] 点击“自定义”后弹出日期选择器，初始范围=最近30天  
+- [x] 有效区间选择后，列表刷新且 URL 更新  
+- [x] 无效区间（起始 > 结束）前端拦截并提示，不发请求  
+
+### 任务列表
+- [x] **任务 2.1**：新增组件 `src/components/DateRangePicker.vue`：
+  ```vue
+  <template>
+    <el-date-picker
+      v-model="range"
+      type="daterange"
+      :default-time="['00:00:00', '23:59:59']"
+      value-format="YYYY-MM-DD"
+      @change="onSelect"
+    />
+  </template>
+  ```
+- [x] **任务 2.2**：在 `UserListFilter.vue` 中集成：当 `dateRangePreset === 'custom'` 时显示该组件  
+- [x] **任务 2.3**：实现校验逻辑（`onSelect`）：
+  ```ts
+  const onSelect = (val: [string, string] | null) => {
+    if (!val) return;
+    const [fromStr, toStr] = val;
+    if (new Date(fromStr) > new Date(toStr)) {
+      ElMessage.error('起始日期不能晚于结束日期');
+      return; // 中断
+    }
+    // 转 ISO 8601 UTC+8
+    const from = `${fromStr}T00:00:00+08:00`;
+    const to = `${toStr}T23:59:59+08:00`;
+    applyFilter({ joinDateFrom: from, joinDateTo: to });
+  };
+  ```
+- [x] **任务 2.4**：更新筛选器显示文本：`customText = `${range[0]} ~ ${range[1]}
+
+
+
+## 用户故事 3：作为后端工程师，我需要 API 支持入职时间筛选  
+**归属场景**：场景-1、场景 2、场景 3  
+**验收条件：**  
+- [x] `/api/v1/users` 支持 `joinDateFrom` / `joinDateTo` 查询参数  
+- [x] 参数非 ISO 8601 或无时区 → 返回 400 + 错误信息  
+- [x] 数据库查询使用 `WHERE join_date BETWEEN ? AND ?`（UTC 时间转换正确）  
+
+### 任务列表
+- [x] **任务 3.1**：NestJS：更新 `users.controller.ts`：
+  ```ts
+  @Get()
+  async findAll(
+    @Query('joinDateFrom') joinDateFrom?: string,
+    @Query('joinDateTo') joinDateTo?: string,
+  ) {
+    if (joinDateFrom) validateISO8601WithOffset(joinDateFrom); // 自定义校验
+    return this.usersService.findAll({ joinDateFrom, joinDateTo });
+  }
+  ```
+- [x] **任务 3.2**：Service 层：转换为 UTC 时间查询：
+  ```ts
+  // utils/time.ts
+  export const toUTCStart = (localStr: string): Date => {
+    const d = new Date(localStr);
+    return new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+  };
+  ```
+- [x] **任务 3.2**：编写测试（`users.controller.spec.ts`）：
+  ```ts
+  it('should filter by joinDateFrom/joinDateTo', async () => {
+    const query = { joinDateFrom: '2025-11-01T00:00:00+08:00', joinDateTo: '2025-11-10T23:59:59+08:00' };
+    await controller.findAll(query);
+    expect(service.findAll).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        joinDate: { $gte: new Date('2025-10-31T16:00:00Z'), $lte: new Date('2025-11-10T15:59:59Z') }
+      }
+    }));
+  });
+  ```
+> ✅ **关键细节**：  
+> - 任务含**真实代码片段**（非伪代码），新人可直接参考  
+> - 验收条件与 `spec.md` 场景严格对应（如 `场景 3` → `用户故事 2` 的校验）  
+> - 每个 `[x]` 表示“已完成”，团队可直观看到进展
+  ```
